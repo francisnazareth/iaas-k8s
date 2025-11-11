@@ -39,16 +39,14 @@ param bastionSkuName string = 'Standard'
 @secure()
 param sshPublicKey string
 
-@description('VM size for Kubernetes nodes')
-param vmSize string = 'Standard_D4ads_v5'
-
 @description('Admin username for VMs')
-param adminUsername string = 'azureuser'
+param adminUsername string
+
+@description('VM size for Kubernetes nodes')
+param vmSize string
 
 @description('Initialization script for master node')
 param masterInitScript string
-
-@description('Initialization script for worker nodes')
 param workerInitScript string
 
 // Module to create the resource group

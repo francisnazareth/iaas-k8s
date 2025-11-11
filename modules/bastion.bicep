@@ -16,7 +16,7 @@ param tags object = {}
   'Standard'
   'Premium'
 ])
-param skuName string = 'Standard'
+param skuName string
 
 // Create a public IP for Azure Bastion
 resource bastionPublicIp 'Microsoft.Network/publicIPAddresses@2024-01-01' = {

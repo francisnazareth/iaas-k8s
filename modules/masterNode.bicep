@@ -8,14 +8,14 @@ param subnetId string
 param tags object = {}
 
 @description('The admin username for the VM')
-param adminUsername string = 'azureuser'
+param adminUsername string
 
 @description('SSH public key for VM authentication')
 @secure()
 param sshPublicKey string
 
 @description('VM size/SKU')
-param vmSize string = 'Standard_D4ads_v5'
+param vmSize string
 
 @description('The name of the master VM')
 param masterName string = 'k8s-master'
@@ -65,7 +65,7 @@ resource masterVm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
         managedDisk: {
           storageAccountType: 'Premium_LRS'
         }
-        diskSizeGB: 30
+        diskSizeGB: 128
       }
     }
     osProfile: {
