@@ -20,7 +20,10 @@ The deployment creates the following resources:
 
 - Azure CLI installed
 - Azure subscription
-- SSH key pair generated (stored in C:\Users\fnazaret\Downloads\)
+- Generate SSH Keys
+  ```ssh-keygen -m PEM -t rsa -b 2048```
+- Copy the contents of public key to line 11 in main.bicepparam
+- Use the user azureuser and private key to login to the master and worker VMs. 
 
 ## Project Structure
 
