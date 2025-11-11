@@ -47,7 +47,23 @@ Deploy the infrastructure using Azure CLI:
 ```powershell
 az deployment sub create --name k8s --location canadacentral --template-file main.bicep --parameters .\main.bicepparam
 ```
-
+Once the script finishes execution, login to the master VM (using bastion, Authentication Type: SSH Private Key from Local File. User name: azureuser, use the private key). 
+- Execute the following command
+```
+kubeadm token create --print-join-command
+```
+- Copy the output from the command, and run the kubeadm join command on each of the worker nodes.
+- On master node, verify that all nodes are ready by executing the command
+```
+kubectl get nodes
+```
+- The output should resemble the following:
+```
+NAME          STATUS   ROLES           AGE    VERSION
+k8s-master    Ready    control-plane   152m   v1.34.1
+k8s-worker1   Ready    <none>          39m    v1.34.1
+k8s-worker2   Ready    <none>          28m    v1.34.1
+```
 ## Configuration
 
 ### Initialization Scripts
