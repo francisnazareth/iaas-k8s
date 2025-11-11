@@ -1,0 +1,21 @@
+# Bicep generated files
+*.json
+
+# Azure CLI
+.azure/
+
+# VS Code
+.vscode/
+
+# SSH keys (don't commit private keys)
+*.pem
+id_rsa
+id_rsa.pub
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
