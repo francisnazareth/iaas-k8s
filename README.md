@@ -22,9 +22,8 @@ The deployment creates the following resources:
 - Azure subscription
 - Generate SSH Keys
   ```ssh-keygen -m PEM -t rsa -b 2048```
-- Copy the contents of public key to line 11 in main.bicepparam
-- Use the user azureuser and private key to login to the master and worker VMs. 
-
+- Copy the contents of public key to line 14 (sshPublicKey) in main.bicepparam
+- Store the private key. This key will be needed to login to virtual machines. 
 ## Project Structure
 
 ```
