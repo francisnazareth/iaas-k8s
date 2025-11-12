@@ -67,10 +67,26 @@ echo "=== Step 9: Install Azure CLI ==="
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 echo "=== Step 10: Login to Azure using managed identity ==="
 az login --identity
-echo "=== Step 11: Generate and store kubeadm join command in Key Vault ==="
+echo "=== Step 11: Wait for Key Vault permissions to propagate ==="
+sleep 30
+echo "=== Step 12: Generate and store kubeadm join command in Key Vault ==="
 JOIN_COMMAND=$(kubeadm token create --print-join-command)
-az keyvault secret set --vault-name __KEY_VAULT_NAME__ --name "kubeadm-join-command" --value "$JOIN_COMMAND"
-echo "=== Master node setup completed. Join command stored in Key Vault ==="
+MAX_RETRIES=5
+RETRY_COUNT=0
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if az keyvault secret set --vault-name __KEY_VAULT_NAME__ --name "kubeadm-join-command" --value "$JOIN_COMMAND" 2>/dev/null; then
+    echo "Join command successfully stored in Key Vault"
+    break
+  fi
+  echo "Failed to store secret in Key Vault (attempt $((RETRY_COUNT+1))/$MAX_RETRIES). Retrying in 10 seconds..."
+  sleep 10
+  RETRY_COUNT=$((RETRY_COUNT+1))
+done
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ERROR: Failed to store join command in Key Vault after $MAX_RETRIES attempts"
+  echo "WARNING: Worker nodes will not be able to join the cluster automatically"
+fi
+echo "=== Master node setup completed ==="
 '''
 param workerInitScript = '''
 echo "=== step 1: disabling swap ===".
