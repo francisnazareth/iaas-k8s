@@ -47,7 +47,7 @@ Deploy the infrastructure using Azure CLI:
 az deployment sub create --name k8s --location canadacentral --template-file main.bicep --parameters .\main.bicepparam
 ```
 Once the script finishes execution, login to the master VM (using bastion, Authentication Type: SSH Private Key from Local File. User name: azureuser, use the private key). 
-- Execute the following command
+- Execute the following command in the master node. 
 ```
 kubeadm token create --print-join-command
 ```
