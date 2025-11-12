@@ -1,6 +1,6 @@
-# Kubernetes Infrastructure on Azure
+# Kubernetes Cluster (IAAS) on Azure
 
-This repository contains Bicep templates to deploy a Kubernetes infrastructure on Azure using Infrastructure as Code (IaC).
+This repository contains Bicep templates to deploy a Kubernetes cluster on Azure using Infrastructure as Code (IaC).
 
 ## Architecture
 
@@ -46,12 +46,11 @@ Deploy the infrastructure using Azure CLI:
 ```powershell
 az deployment sub create --name k8s --location canadacentral --template-file main.bicep --parameters .\main.bicepparam
 ```
-Once the script finishes execution, login to the master VM (using bastion, Authentication Type: SSH Private Key from Local File. User name: azureuser, use the private key). 
-- Execute the following command in the master node. 
-```
-kubeadm token create --print-join-command
-```
-- Copy the output from the command, and run the kubeadm join command on each of the worker nodes.
+Once the script finishes execution, login to the master VM using Azure bastion.  
+  -- Authentication Type:  SSH Private Key from Local File. 
+  -- User name: azureuser 
+  -- use the private key 
+
 - On master node, verify that all nodes are ready by executing the command
 ```
 kubectl get nodes

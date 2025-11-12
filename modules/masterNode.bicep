@@ -20,6 +20,12 @@ param vmSize string
 @description('The name of the master VM')
 param masterName string = 'k8s-master'
 
+@description('The resource ID of the managed identity to use')
+param managedIdentityId string
+
+@description('OS disk size in GB')
+param osDiskSizeGB int = 128
+
 @description('Initialization script to run on master VM')
 param initScript string
 
@@ -48,6 +54,12 @@ resource masterVm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
   name: masterName
   location: location
   tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${managedIdentityId}': {}
+    }
+  }
   properties: {
     hardwareProfile: {
       vmSize: vmSize
@@ -65,7 +77,7 @@ resource masterVm 'Microsoft.Compute/virtualMachines@2024-03-01' = {
         managedDisk: {
           storageAccountType: 'Premium_LRS'
         }
-        diskSizeGB: 128
+        diskSizeGB: osDiskSizeGB
       }
     }
     osProfile: {

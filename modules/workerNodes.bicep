@@ -18,10 +18,13 @@ param sshPublicKey string
 param vmSize string
 
 @description('Array of worker VM names')
-param workerNames array = [
-  'k8s-worker1'
-  'k8s-worker2'
-]
+param workerNames array
+
+@description('The resource ID of the managed identity to use')
+param managedIdentityId string
+
+@description('OS disk size in GB')
+param osDiskSizeGB int = 128
 
 @description('Initialization script to run on worker VMs')
 param initScript string
@@ -51,6 +54,12 @@ resource workerVms 'Microsoft.Compute/virtualMachines@2024-03-01' = [for (worker
   name: workerName
   location: location
   tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${managedIdentityId}': {}
+    }
+  }
   properties: {
     hardwareProfile: {
       vmSize: vmSize
@@ -68,7 +77,7 @@ resource workerVms 'Microsoft.Compute/virtualMachines@2024-03-01' = [for (worker
         managedDisk: {
           storageAccountType: 'Premium_LRS'
         }
-        diskSizeGB: 128
+        diskSizeGB: osDiskSizeGB
       }
     }
     osProfile: {

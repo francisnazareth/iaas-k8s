@@ -45,9 +45,25 @@ param adminUsername string
 @description('VM size for Kubernetes nodes')
 param vmSize string
 
+@description('Base name for the Key Vault (will be appended with unique suffix)')
+param keyVaultBaseName string = 'kv-k8s-dev-cc'
+
+@description('Number of worker nodes to create')
+@minValue(1)
+@maxValue(10)
+param workerNodeCount int = 2
+
+@description('OS disk size in GB for VMs')
+@minValue(30)
+@maxValue(2048)
+param osDiskSizeGB int = 128
+
 @description('Initialization script for master node')
 param masterInitScript string
 param workerInitScript string
+
+// Generate unique Key Vault name with random suffix
+var keyVaultName = '${keyVaultBaseName}-${substring(uniqueString(subscription().id, resourceGroupName), 0, 5)}'
 
 // Module to create the resource group
 module rg './modules/resourceGroup.bicep' = {
@@ -57,6 +73,19 @@ module rg './modules/resourceGroup.bicep' = {
     name: resourceGroupName
     tags: tags
   }
+}
+
+// Module to create shared managed identity for all Kubernetes VMs
+module k8sIdentity './modules/managedIdentity.bicep' = {
+  scope: resourceGroup(resourceGroupName)
+  params: {
+    location: location
+    identityName: 'id-k8s-vms'
+    tags: tags
+  }
+  dependsOn: [
+    rg
+  ]
 }
 
 // Module to create the virtual network
@@ -77,6 +106,22 @@ module vnet './modules/virtualNetwork.bicep' = {
         addressPrefix: bastionSubnetPrefix
       }
     ]
+  }
+  dependsOn: [
+    rg
+  ]
+}
+
+// Module to create Key Vault
+module keyVault './modules/keyVault.bicep' = {
+  scope: resourceGroup(resourceGroupName)
+  params: {
+    location: location
+    keyVaultName: keyVaultName
+    tags: tags
+    tenantId: subscription().tenantId
+    managedIdentityPrincipalId: k8sIdentity.outputs.principalId
+    enableRbacAuthorization: true
   }
   dependsOn: [
     rg
@@ -106,8 +151,13 @@ module masterNode './modules/masterNode.bicep' = {
     sshPublicKey: sshPublicKey
     vmSize: vmSize
     masterName: 'k8s-master'
-    initScript: masterInitScript
+    managedIdentityId: k8sIdentity.outputs.identityId
+    osDiskSizeGB: osDiskSizeGB
+    initScript: replace(masterInitScript, '__KEY_VAULT_NAME__', keyVaultName)
   }
+  dependsOn: [
+    keyVault
+  ]
 }
 
 // Module to create worker nodes
@@ -120,12 +170,15 @@ module workerNodes './modules/workerNodes.bicep' = {
     adminUsername: adminUsername
     sshPublicKey: sshPublicKey
     vmSize: vmSize
-    workerNames: [
-      'k8s-worker1'
-      'k8s-worker2'
-    ]
-    initScript: workerInitScript
+    workerNames: [for i in range(1, workerNodeCount): 'k8s-worker${i}']
+    managedIdentityId: k8sIdentity.outputs.identityId
+    osDiskSizeGB: osDiskSizeGB
+    initScript: replace(workerInitScript, '__KEY_VAULT_NAME__', keyVaultName)
   }
+  dependsOn: [
+    keyVault
+    masterNode
+  ]
 }
 
 output resourceGroupName string = rg.outputs.name
