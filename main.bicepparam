@@ -143,5 +143,21 @@ if [ -z "$JOIN_COMMAND" ]; then
 fi
 echo "=== Step 9: Join the Kubernetes cluster ==="
 eval $JOIN_COMMAND
+echo "=== Step 10: Wait for node to be ready and apply label ==="
+NODE_NAME=$(hostname)
+sleep 15
+# Label the node with workload=app1
+MAX_LABEL_RETRIES=10
+LABEL_RETRY_COUNT=0
+while [ $LABEL_RETRY_COUNT -lt $MAX_LABEL_RETRIES ]; do
+  if kubectl label node $NODE_NAME workload=app1 --overwrite --kubeconfig=/dev/null 2>/dev/null || \
+     ssh -o StrictHostKeyChecking=no azureuser@k8s-master "kubectl label node $NODE_NAME workload=app1 --overwrite" 2>/dev/null; then
+    echo "Successfully labeled node $NODE_NAME with workload=app1"
+    break
+  fi
+  echo "Waiting to label node... (attempt $((LABEL_RETRY_COUNT+1))/$MAX_LABEL_RETRIES)"
+  sleep 10
+  LABEL_RETRY_COUNT=$((LABEL_RETRY_COUNT+1))
+done
 echo "=== Worker node successfully joined the cluster ==="
 '''
