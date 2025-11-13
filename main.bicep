@@ -160,8 +160,8 @@ module masterNode './modules/masterNode.bicep' = {
   ]
 }
 
-// Module to create worker nodes
-module workerNodes './modules/workerNodes.bicep' = {
+// Module to create worker nodes as VMSS
+module workerVMSS './modules/workerVMSS.bicep' = {
   scope: resourceGroup(resourceGroupName)
   params: {
     location: location
@@ -170,7 +170,8 @@ module workerNodes './modules/workerNodes.bicep' = {
     adminUsername: adminUsername
     sshPublicKey: sshPublicKey
     vmSize: vmSize
-    workerNames: [for i in range(1, workerNodeCount): 'k8s-worker${i}']
+    vmssName: 'vmss-k8s-workers'
+    instanceCount: workerNodeCount
     managedIdentityId: k8sIdentity.outputs.identityId
     osDiskSizeGB: osDiskSizeGB
     initScript: replace(workerInitScript, '__KEY_VAULT_NAME__', keyVaultName)
@@ -195,4 +196,8 @@ output masterNode object = {
   id: masterNode.outputs.id
   privateIpAddress: masterNode.outputs.privateIpAddress
 }
-output workerNodes array = workerNodes.outputs.workers
+output workerVMSS object = {
+  name: workerVMSS.outputs.name
+  id: workerVMSS.outputs.id
+  instanceCount: workerVMSS.outputs.instanceCount
+}
