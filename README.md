@@ -2,6 +2,14 @@
 
 This repository contains Bicep templates to deploy a Kubernetes cluster on Azure using Infrastructure as Code (IaC).
 
+## Features 
+
+- Single command based installation for the cluster. 
+- Worker nodes are provisioned through a virtual machine scale set.
+- If you scale up the scale-set, worker nodes automatically join the kubernetes cluster. 
+- In-bound access can be controlled by internal load balancer.
+- Outbound traffic can be routed through Firewall, using Route Tables. 
+
 ## Architecture
 
 The deployment creates the following resources:
