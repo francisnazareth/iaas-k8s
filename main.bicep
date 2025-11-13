@@ -58,9 +58,9 @@ param workerNodeCount int = 2
 @maxValue(2048)
 param osDiskSizeGB int = 128
 
-@description('Initialization script for master node')
-param masterInitScript string
-param workerInitScript string
+// Load initialization scripts from external files
+var masterInitScript = loadTextContent('scripts/master-init.sh')
+var workerInitScript = loadTextContent('scripts/worker-init.sh')
 
 // Generate unique Key Vault name with random suffix
 var keyVaultName = '${keyVaultBaseName}-${substring(uniqueString(subscription().id, resourceGroupName), 0, 5)}'
