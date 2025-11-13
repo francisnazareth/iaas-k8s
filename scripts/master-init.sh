@@ -41,46 +41,6 @@ chown azureuser:azureuser /home/azureuser/.kube/config
 KUBECONFIG=/home/azureuser/.kube/config
 echo "=== Step 8: Install Calico CNI ==="
 kubectl  --kubeconfig /home/azureuser/.kube/config apply -f https://docs.projectcalico.org/manifests/calico.yaml
-echo "=== Step 8a: Wait for CoreDNS to be ready ==="
-kubectl --kubeconfig /home/azureuser/.kube/config wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s
-echo "=== Step 8b: Verify CoreDNS is running ==="
-kubectl --kubeconfig /home/azureuser/.kube/config get pods -n kube-system -l k8s-app=kube-dns
-echo "=== Step 8c: Configure CoreDNS to forward to Azure DNS ==="
-kubectl --kubeconfig /home/azureuser/.kube/config get configmap coredns -n kube-system -o yaml > /tmp/coredns-configmap.yaml
-# Backup original configmap
-cp /tmp/coredns-configmap.yaml /tmp/coredns-configmap.yaml.backup
-# Update CoreDNS config to forward to Azure DNS (168.63.129.16)
-cat <<'EOFCOREDNS' | kubectl --kubeconfig /home/azureuser/.kube/config apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: coredns
-  namespace: kube-system
-data:
-  Corefile: |
-    .:53 {
-        errors
-        health {
-           lameduck 5s
-        }
-        ready
-        kubernetes cluster.local in-addr.arpa ip6.arpa {
-           pods insecure
-           fallthrough in-addr.arpa ip6.arpa
-           ttl 30
-        }
-        prometheus :9153
-        forward . 168.63.129.16
-        cache 30
-        loop
-        reload
-        loadbalance
-    }
-EOFCOREDNS
-echo "=== Step 8d: Restart CoreDNS pods to apply new configuration ==="
-kubectl --kubeconfig /home/azureuser/.kube/config rollout restart deployment coredns -n kube-system
-kubectl --kubeconfig /home/azureuser/.kube/config rollout status deployment coredns -n kube-system --timeout=120s
-echo "=== CoreDNS configured to use Azure DNS ==="
 echo "=== Step 9: Install Azure CLI ==="
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 echo "=== Step 10: Login to Azure using managed identity ==="
