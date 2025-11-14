@@ -1,5 +1,6 @@
 #!/bin/bash
-POD_CIDR="192.168.0.0/16"
+# Note: For Azure CNI, pods get IPs from the VNet subnet
+# Remove POD_CIDR as Azure CNI uses VNet address space
 CONTROL_PLANE_IP=$(hostname -I | awk '{print $1}')
 swapoff -a
 sed -i '/swap/d' /etc/fstab
@@ -26,24 +27,48 @@ echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 apt-get update
 apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
-kubeadm init --apiserver-advertise-address=$CONTROL_PLANE_IP --pod-network-cidr=$POD_CIDR --service-dns-domain=cluster.local
+# Initialize without --pod-network-cidr for Azure CNI
+kubeadm init --apiserver-advertise-address=$CONTROL_PLANE_IP --service-dns-domain=cluster.local
 mkdir -p /home/azureuser/.kube
 cp -i /etc/kubernetes/admin.conf /home/azureuser/.kube/config
 chown azureuser:azureuser /home/azureuser/.kube/config
 KUBECONFIG=/home/azureuser/.kube/config
-echo "=== Step 8: Install Calico CNI with correct POD CIDR ==="
-# Download Calico manifest
-curl -L https://docs.projectcalico.org/manifests/calico.yaml -o /tmp/calico.yaml
-# Verify POD_CIDR matches and update if needed
-sed -i "s|# - name: CALICO_IPV4POOL_CIDR|- name: CALICO_IPV4POOL_CIDR|g" /tmp/calico.yaml
-sed -i "s|#   value: \"192.168.0.0/16\"|  value: \"$POD_CIDR\"|g" /tmp/calico.yaml
-# Apply Calico
-kubectl --kubeconfig /home/azureuser/.kube/config apply -f /tmp/calico.yaml
-echo "=== Step 8a: Wait for Calico to be ready ==="
-kubectl --kubeconfig /home/azureuser/.kube/config wait --for=condition=ready pod -l k8s-app=calico-node -n kube-system --timeout=300s || echo "Calico pods not ready yet, continuing..."
-echo "=== Step 8b: Wait for CoreDNS to be ready ==="
+echo "=== Step 8: Install Azure CNI ==="
+# Download and install Azure CNI plugin
+wget https://github.com/Azure/azure-container-networking/releases/download/v1.5.36/azure-vnet-cni-linux-amd64-v1.5.36.tgz -O /tmp/azure-vnet-cni.tgz
+mkdir -p /opt/cni/bin
+tar -xzf /tmp/azure-vnet-cni.tgz -C /opt/cni/bin
+chmod +x /opt/cni/bin/*
+
+# Create Azure CNI configuration
+mkdir -p /etc/cni/net.d
+cat <<EOFCNI > /etc/cni/net.d/10-azure.conflist
+{
+  "cniVersion": "0.3.0",
+  "name": "azure",
+  "plugins": [
+    {
+      "type": "azure-vnet",
+      "mode": "bridge",
+      "bridge": "azure0",
+      "ipam": {
+        "type": "azure-vnet-ipam"
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      },
+      "snat": true
+    }
+  ]
+}
+EOFCNI
+
+echo "=== Step 8a: Wait for CoreDNS to be ready ==="
 kubectl --kubeconfig /home/azureuser/.kube/config wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s
-echo "=== Step 8c: Configure CoreDNS to forward external DNS to Azure DNS ==="
+echo "=== Step 8b: Configure CoreDNS to forward external DNS to Azure DNS ==="
 cat <<'EOFCOREDNS' | kubectl --kubeconfig /home/azureuser/.kube/config apply -f -
 apiVersion: v1
 kind: ConfigMap
@@ -71,10 +96,10 @@ data:
         loadbalance
     }
 EOFCOREDNS
-echo "=== Step 8d: Restart CoreDNS to apply configuration ==="
+echo "=== Step 8c: Restart CoreDNS to apply configuration ==="
 kubectl --kubeconfig /home/azureuser/.kube/config rollout restart deployment coredns -n kube-system
 kubectl --kubeconfig /home/azureuser/.kube/config rollout status deployment coredns -n kube-system --timeout=120s
-echo "=== Calico and CoreDNS configured successfully ==="
+echo "=== Azure CNI and CoreDNS configured successfully ==="
 echo "=== Step 9: Install Azure CLI ==="
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 echo "=== Step 10: Login to Azure using managed identity ==="
