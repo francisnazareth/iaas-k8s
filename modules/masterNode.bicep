@@ -35,6 +35,7 @@ resource masterNic 'Microsoft.Network/networkInterfaces@2024-01-01' = {
   location: location
   tags: tags
   properties: {
+    enableIPForwarding: true
     ipConfigurations: [
       {
         name: 'ipconfig1'

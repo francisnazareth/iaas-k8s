@@ -92,6 +92,7 @@ resource workerVMSS 'Microsoft.Compute/virtualMachineScaleSets@2024-03-01' = {
             name: 'worker-nic'
             properties: {
               primary: true
+              enableIPForwarding: true
               ipConfigurations: [
                 {
                   name: 'ipconfig1'
