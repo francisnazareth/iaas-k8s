@@ -1,12 +1,12 @@
 using './main.bicep'
 
 param location = 'canadacentral'
-param resourceGroupName = 'rg-k8s-dev-cc-11'
+param resourceGroupName = 'rg-k8s-dev-cc-15'
 param vnetName = 'vnet-k8s-dev-cc-01'
 param vnetAddressPrefix = '10.0.0.0/20'
 param k8sSubnetName = 'snet-k8s'
-param k8sSubnetPrefix = '10.0.0.0/21'
-param bastionSubnetPrefix = '10.0.8.0/26'
+param bastionSubnetPrefix = '10.0.0.64/26'
+param k8sSubnetPrefix = '10.0.8.0/21'
 param bastionName = 'bastion-k8s-dev-cc-01'
 param bastionSkuName = 'Standard'
 param keyVaultBaseName = 'kv-k8s-dev-cc'
@@ -18,4 +18,5 @@ param sshPublicKey = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDcK945AY0BUVDFbObXAx
 param tags = {
   environment: 'dev'
   project: 'containers-infra'
+  SecurityControl: 'Ignore'
 }

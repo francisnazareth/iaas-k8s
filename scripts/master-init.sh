@@ -1,17 +1,21 @@
 #!/bin/bash
 CONTROL_PLANE_IP=$(hostname -I | awk '{print $1}')
+# Disable swap
 swapoff -a
 sed -i '/swap/d' /etc/fstab
+# Load kernel modules
 modprobe overlay
 modprobe br_netfilter
 echo "br_netfilter" | tee -a /etc/modules-load.d/containerd.conf
-echo "overlay" | tee /etc/modules-load.d/containerd.conf
+echo "overlay" | tee -a /etc/modules-load.d/containerd.conf
+# Configure sysctl
 cat <<EOF | tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-iptables = 1
 net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward = 1
 EOF
 sysctl --system
+# Install containerd
 apt-get update
 apt-get install -y containerd
 mkdir -p /etc/containerd
@@ -19,23 +23,25 @@ containerd config default | tee /etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 systemctl restart containerd
 systemctl enable containerd
+# Install Kubernetes components
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
 apt-get update
 apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
+# Initialize control plane
 kubeadm init --apiserver-advertise-address=$CONTROL_PLANE_IP --service-dns-domain=cluster.local
+# Configure kubeconfig for azureuser
 mkdir -p /home/azureuser/.kube
 cp -i /etc/kubernetes/admin.conf /home/azureuser/.kube/config
 chown azureuser:azureuser /home/azureuser/.kube/config
-KUBECONFIG=/home/azureuser/.kube/config
-# Download and install Azure CNI plugin
+export KUBECONFIG=/home/azureuser/.kube/config
+echo "=== Installing Azure CNI ==="
 wget https://github.com/Azure/azure-container-networking/releases/download/v1.5.36/azure-vnet-cni-linux-amd64-v1.5.36.tgz -O /tmp/azure-vnet-cni.tgz
 mkdir -p /opt/cni/bin
 tar -xzf /tmp/azure-vnet-cni.tgz -C /opt/cni/bin
 chmod +x /opt/cni/bin/*
-
 # Create Azure CNI configuration
 mkdir -p /etc/cni/net.d
 cat <<EOFCNI > /etc/cni/net.d/10-azure.conflist
@@ -45,8 +51,7 @@ cat <<EOFCNI > /etc/cni/net.d/10-azure.conflist
   "plugins": [
     {
       "type": "azure-vnet",
-      "mode": "bridge",
-      "bridge": "azure0",
+      "mode": "transparent",
       "ipam": {
         "type": "azure-vnet-ipam"
       }
@@ -61,12 +66,16 @@ cat <<EOFCNI > /etc/cni/net.d/10-azure.conflist
   ]
 }
 EOFCNI
-
-echo "=== Step 8a: Wait for CoreDNS to be ready ==="
-kubectl --kubeconfig /home/azureuser/.kube/config wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s || echo "CoreDNS not ready yet, continuing..."
-
-echo "=== Step 8b: Configure CoreDNS to forward external DNS to Azure DNS ==="
-cat <<'EOFCOREDNS' | kubectl --kubeconfig /home/azureuser/.kube/config apply -f -
+# Ensure kubelet uses CNI
+if ! grep -q -- "--network-plugin=cni" /var/lib/kubelet/kubeadm-flags.env; then
+  sed -i 's/$/ --network-plugin=cni/' /var/lib/kubelet/kubeadm-flags.env
+fi
+# Restart kubelet
+systemctl restart kubelet
+echo "=== Waiting for CoreDNS to be ready ==="
+kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s || echo "CoreDNS not ready yet, continuing..."
+echo "=== Configuring CoreDNS to forward to Azure DNS ==="
+cat <<'EOFCOREDNS' | kubectl apply -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -93,11 +102,8 @@ data:
         loadbalance
     }
 EOFCOREDNS
-
-echo "=== Step 8c: Restart CoreDNS to apply configuration ==="
-kubectl --kubeconfig /home/azureuser/.kube/config rollout restart deployment coredns -n kube-system
-kubectl --kubeconfig /home/azureuser/.kube/config rollout status deployment coredns -n kube-system --timeout=120s
-
+kubectl rollout restart deployment coredns -n kube-system
+kubectl rollout status deployment coredns -n kube-system --timeout=120s
 echo "=== Azure CNI and CoreDNS configured successfully ==="
 echo "=== Step 9: Install Azure CLI ==="
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash

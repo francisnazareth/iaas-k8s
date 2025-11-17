@@ -21,6 +21,9 @@ param k8sSubnetName string
 @description('The address prefix for the Kubernetes subnet')
 param k8sSubnetPrefix string
 
+@description('The address prefix for the Kubernetes pod subnet')
+param k8sPodSubnetPrefix string
+
 @description('The address prefix for the Azure Bastion subnet')
 param bastionSubnetPrefix string
 
@@ -102,6 +105,10 @@ module vnet './modules/virtualNetwork.bicep' = {
         addressPrefix: k8sSubnetPrefix
       }
       {
+        name: 'snet-k8s-pods'
+        addressPrefix: k8sPodSubnetPrefix
+      }
+      {
         name: 'AzureBastionSubnet'
         addressPrefix: bastionSubnetPrefix
       }
@@ -134,7 +141,7 @@ module bastion './modules/bastion.bicep' = {
   params: {
     name: bastionName
     location: location
-    bastionSubnetId: vnet.outputs.subnets[1].id
+    bastionSubnetId: vnet.outputs.subnets[2].id
     tags: tags
     skuName: bastionSkuName
   }
