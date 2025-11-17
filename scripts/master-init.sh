@@ -1,13 +1,16 @@
 #!/bin/bash
 CONTROL_PLANE_IP=$(hostname -I | awk '{print $1}')
+
 # Disable swap
 swapoff -a
 sed -i '/swap/d' /etc/fstab
+
 # Load kernel modules
 modprobe overlay
 modprobe br_netfilter
 echo "br_netfilter" | tee -a /etc/modules-load.d/containerd.conf
 echo "overlay" | tee -a /etc/modules-load.d/containerd.conf
+
 # Configure sysctl
 cat <<EOF | tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-iptables = 1
@@ -15,6 +18,7 @@ net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward = 1
 EOF
 sysctl --system
+
 # Install containerd
 apt-get update
 apt-get install -y containerd
@@ -23,6 +27,7 @@ containerd config default | tee /etc/containerd/config.toml
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 systemctl restart containerd
 systemctl enable containerd
+
 # Install Kubernetes components
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
@@ -30,50 +35,72 @@ echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 apt-get update
 apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
-# Initialize control plane
-kubeadm init --apiserver-advertise-address=$CONTROL_PLANE_IP --service-dns-domain=cluster.local
+
+# Ensure IP forwarding is enabled at the interface level
+echo "=== Enabling IP forwarding on network interface ==="
+PRIMARY_IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+echo "Primary interface: $PRIMARY_IFACE"
+
+# Enable IP forwarding on the interface
+echo 1 > /proc/sys/net/ipv4/ip_forward
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv4.conf.all.forwarding=1
+sysctl -w net.ipv4.conf.$PRIMARY_IFACE.forwarding=1
+
+# Verify IP forwarding is enabled
+IP_FORWARD=$(cat /proc/sys/net/ipv4/ip_forward)
+if [ "$IP_FORWARD" != "1" ]; then
+  echo "ERROR: IP forwarding is not enabled!"
+  exit 1
+fi
+echo "IP forwarding verified: enabled"
+
+# Initialize control plane with kubenet (pod CIDR for overlay network)
+echo "=== Initializing Kubernetes control plane with kubenet ==="
+kubeadm init --apiserver-advertise-address=$CONTROL_PLANE_IP --service-dns-domain=cluster.local --pod-network-cidr=10.244.0.0/16
+
 # Configure kubeconfig for azureuser
 mkdir -p /home/azureuser/.kube
 cp -i /etc/kubernetes/admin.conf /home/azureuser/.kube/config
 chown azureuser:azureuser /home/azureuser/.kube/config
 export KUBECONFIG=/home/azureuser/.kube/config
-echo "=== Installing Azure CNI ==="
-wget https://github.com/Azure/azure-container-networking/releases/download/v1.5.36/azure-vnet-cni-linux-amd64-v1.5.36.tgz -O /tmp/azure-vnet-cni.tgz
-mkdir -p /opt/cni/bin
-tar -xzf /tmp/azure-vnet-cni.tgz -C /opt/cni/bin
-chmod +x /opt/cni/bin/*
-# Create Azure CNI configuration
-mkdir -p /etc/cni/net.d
-cat <<EOFCNI > /etc/cni/net.d/10-azure.conflist
-{
-  "cniVersion": "0.3.0",
-  "name": "azure",
-  "plugins": [
-    {
-      "type": "azure-vnet",
-      "mode": "transparent",
-      "ipam": {
-        "type": "azure-vnet-ipam"
-      }
-    },
-    {
-      "type": "portmap",
-      "capabilities": {
-        "portMappings": true
-      },
-      "snat": true
-    }
-  ]
-}
-EOFCNI
-# Ensure kubelet uses CNI
-if ! grep -q -- "--network-plugin=cni" /var/lib/kubelet/kubeadm-flags.env; then
-  sed -i 's/$/ --network-plugin=cni/' /var/lib/kubelet/kubeadm-flags.env
-fi
-# Restart kubelet
-systemctl restart kubelet
+
+echo "=== Installing Calico CNI for network policy ==="
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
+sleep 10
+
+# Create Calico custom resources with matching pod CIDR
+cat <<EOFCALICO | kubectl apply -f -
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+    - blockSize: 26
+      cidr: 10.244.0.0/16
+      encapsulation: VXLAN
+      natOutgoing: Enabled
+      nodeSelector: all()
+---
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}
+EOFCALICO
+
+echo "=== Waiting for Calico to be ready ==="
+kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=300s || echo "Calico not ready yet, continuing..."
+
+echo "=== Removing taint from master node to allow pod scheduling ==="
+kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- || echo "Taint already removed or not present"
+kubectl taint nodes --all node-role.kubernetes.io/master:NoSchedule- || echo "Master taint already removed or not present"
+
 echo "=== Waiting for CoreDNS to be ready ==="
 kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --timeout=300s || echo "CoreDNS not ready yet, continuing..."
+
 echo "=== Configuring CoreDNS to forward to Azure DNS ==="
 cat <<'EOFCOREDNS' | kubectl apply -f -
 apiVersion: v1
@@ -102,16 +129,14 @@ data:
         loadbalance
     }
 EOFCOREDNS
+
 kubectl rollout restart deployment coredns -n kube-system
 kubectl rollout status deployment coredns -n kube-system --timeout=120s
-echo "=== Azure CNI and CoreDNS configured successfully ==="
-echo "=== Step 9: Install Azure CLI ==="
+
+# Azure CLI and Key Vault steps remain unchanged
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-echo "=== Step 10: Login to Azure using managed identity ==="
 az login --identity
-echo "=== Step 11: Wait for Key Vault permissions to propagate ==="
 sleep 30
-echo "=== Step 12: Generate and store kubeadm join command in Key Vault ==="
 JOIN_COMMAND=$(kubeadm token create --print-join-command)
 MAX_RETRIES=5
 RETRY_COUNT=0
@@ -126,6 +151,5 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 done
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
   echo "ERROR: Failed to store join command in Key Vault after $MAX_RETRIES attempts"
-  echo "WARNING: Worker nodes will not be able to join the cluster automatically"
 fi
 echo "=== Master node setup completed ==="

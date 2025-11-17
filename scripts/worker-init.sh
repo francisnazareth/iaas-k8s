@@ -1,20 +1,23 @@
 #!/bin/bash
+
 # Disable swap
 swapoff -a
 sed -i '/swap/d' /etc/fstab
-# Load required kernel modules
+
+# Load kernel modules
 modprobe overlay
 modprobe br_netfilter
 echo "br_netfilter" | tee -a /etc/modules-load.d/containerd.conf
 echo "overlay" | tee -a /etc/modules-load.d/containerd.conf
 
-# Configure sysctl for Kubernetes networking
+# Configure sysctl
 cat <<EOF | tee /etc/sysctl.d/k8s.conf
 net.bridge.bridge-nf-call-iptables = 1
 net.bridge.bridge-nf-call-ip6tables = 1
 net.ipv4.ip_forward = 1
 EOF
 sysctl --system
+
 # Install containerd
 apt-get update
 apt-get install -y containerd
@@ -32,50 +35,32 @@ apt-get update
 apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
 
-echo "=== Installing Azure CNI ==="
-# Download and install Azure CNI plugin
-wget https://github.com/Azure/azure-container-networking/releases/download/v1.5.36/azure-vnet-cni-linux-amd64-v1.5.36.tgz -O /tmp/azure-vnet-cni.tgz
-mkdir -p /opt/cni/bin
-tar -xzf /tmp/azure-vnet-cni.tgz -C /opt/cni/bin
-chmod +x /opt/cni/bin/*
-# Create Azure CNI configuration
-mkdir -p /etc/cni/net.d
-cat <<EOFCNI > /etc/cni/net.d/10-azure.conflist
-{
-  "cniVersion": "0.3.0",
-  "name": "azure",
-  "plugins": [
-    {
-      "type": "azure-vnet",
-      "mode": "transparent",
-      "ipam": {
-        "type": "azure-vnet-ipam"
-      }
-    },
-    {
-      "type": "portmap",
-      "capabilities": {
-        "portMappings": true
-      },
-      "snat": true
-    }
-  ]
-}
-EOFCNI
-# Ensure kubelet uses CNI
-if ! grep -q -- "--network-plugin=cni" /var/lib/kubelet/kubeadm-flags.env; then
-  sed -i 's/$/ --network-plugin=cni/' /var/lib/kubelet/kubeadm-flags.env
+# Ensure IP forwarding is enabled at the interface level
+echo "=== Enabling IP forwarding on network interface ==="
+PRIMARY_IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+echo "Primary interface: $PRIMARY_IFACE"
+
+# Enable IP forwarding on the interface
+echo 1 > /proc/sys/net/ipv4/ip_forward
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv4.conf.all.forwarding=1
+sysctl -w net.ipv4.conf.$PRIMARY_IFACE.forwarding=1
+
+# Verify IP forwarding is enabled
+IP_FORWARD=$(cat /proc/sys/net/ipv4/ip_forward)
+if [ "$IP_FORWARD" != "1" ]; then
+  echo "ERROR: IP forwarding is not enabled!"
+  exit 1
 fi
-# Restart kubelet to pick up CNI configuration
-echo "=== Restarting kubelet ==="
-systemctl restart kubelet
-echo "=== Step 7: Install Azure CLI ==="
-curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-echo "=== Step 8: Login to Azure using managed identity ==="
-az login --identity
-echo "=== Step 9: Retrieve join command from Key Vault ==="
-# Wait for the join command to be available (master node might still be initializing)
-MAX_RETRIES=30
+echo "IP forwarding verified: enabled"
+
+# No CNI installation needed - kubenet is built into Kubernetes
+echo "=== Using kubenet for pod networking ==="
+
+# Retrieve join command from Azure Key Vault
+echo "=== Fetching kubeadm join command from Key Vault ==="
+JOIN_COMMAND=""
+MAX_RETRIES=5
 RETRY_COUNT=0
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
   JOIN_COMMAND=$(az keyvault secret show --vault-name __KEY_VAULT_NAME__ --name "kubeadm-join-command" --query value -o tsv 2>/dev/null)
@@ -83,14 +68,16 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     echo "Join command retrieved successfully"
     break
   fi
-  echo "Waiting for join command to be available... (attempt $((RETRY_COUNT+1))/$MAX_RETRIES)"
+  echo "Failed to retrieve join command (attempt $((RETRY_COUNT+1))/$MAX_RETRIES). Retrying in 10 seconds..."
   sleep 10
   RETRY_COUNT=$((RETRY_COUNT+1))
 done
-if [ -z "$JOIN_COMMAND" ]; then
-  echo "ERROR: Failed to retrieve join command from Key Vault after $MAX_RETRIES attempts"
-  exit 1
+
+if [ -n "$JOIN_COMMAND" ]; then
+  echo "Executing join command..."
+  $JOIN_COMMAND
+else
+  echo "ERROR: Could not retrieve join command from Key Vault"
 fi
-echo "=== Step 10: Join the Kubernetes cluster ==="
-eval $JOIN_COMMAND
-echo "=== Worker node successfully joined the cluster ==="
+
+echo "=== Worker node setup completed ==="
