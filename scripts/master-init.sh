@@ -152,4 +152,41 @@ done
 if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
   echo "ERROR: Failed to store join command in Key Vault after $MAX_RETRIES attempts"
 fi
+
+# Onboard Kubernetes cluster to Azure Arc
+echo "=== Onboarding Kubernetes cluster to Azure Arc ==="
+
+# Get subscription ID and resource group
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+RESOURCE_GROUP="__RESOURCE_GROUP_NAME__"
+ARC_CLUSTER_NAME="__ARC_CLUSTER_NAME__"
+LOCATION="__LOCATION__"
+
+# Install required Azure CLI extensions
+az extension add --name connectedk8s --yes
+az extension add --name k8s-extension --yes
+
+# Register required resource providers
+az provider register --namespace Microsoft.Kubernetes --wait
+az provider register --namespace Microsoft.KubernetesConfiguration --wait
+az provider register --namespace Microsoft.ExtendedLocation --wait
+
+echo "Connecting cluster to Azure Arc..."
+# Connect the cluster to Azure Arc
+az connectedk8s connect \
+  --name "$ARC_CLUSTER_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --location "$LOCATION" \
+  --tags "environment=dev" "project=k8s-arc" \
+  --correlation-id "$(uuidgen)"
+
+if [ $? -eq 0 ]; then
+  echo "Successfully onboarded cluster to Azure Arc"
+  
+  # Verify the connection
+  az connectedk8s show --name "$ARC_CLUSTER_NAME" --resource-group "$RESOURCE_GROUP" -o table
+else
+  echo "WARNING: Failed to onboard cluster to Azure Arc"
+fi
+
 echo "=== Master node setup completed ==="

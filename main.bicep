@@ -58,6 +58,9 @@ param workerNodeCount int = 2
 @maxValue(2048)
 param osDiskSizeGB int = 128
 
+@description('Azure Arc cluster name')
+param arcClusterName string = 'arc-k8s-cluster'
+
 // Load initialization scripts from external files
 var masterInitScript = loadTextContent('scripts/master-init.sh')
 var workerInitScript = loadTextContent('scripts/worker-init.sh')
@@ -82,6 +85,19 @@ module k8sIdentity './modules/managedIdentity.bicep' = {
     location: location
     identityName: 'id-k8s-vms'
     tags: tags
+  }
+  dependsOn: [
+    rg
+  ]
+}
+
+// Module to assign Contributor role to the managed identity on the resource group
+module contributorRole './modules/roleAssignment.bicep' = {
+  scope: resourceGroup(resourceGroupName)
+  params: {
+    principalId: k8sIdentity.outputs.principalId
+    roleDefinitionId: 'b24988ac-6180-42a0-ab88-20f7382dd24c' // Contributor role
+    principalType: 'ServicePrincipal'
   }
   dependsOn: [
     rg
@@ -153,10 +169,11 @@ module masterNode './modules/masterNode.bicep' = {
     masterName: 'k8s-master'
     managedIdentityId: k8sIdentity.outputs.identityId
     osDiskSizeGB: osDiskSizeGB
-    initScript: replace(masterInitScript, '__KEY_VAULT_NAME__', keyVaultName)
+    initScript: replace(replace(replace(replace(masterInitScript, '__KEY_VAULT_NAME__', keyVaultName), '__RESOURCE_GROUP_NAME__', resourceGroupName), '__ARC_CLUSTER_NAME__', arcClusterName), '__LOCATION__', location)
   }
   dependsOn: [
     keyVault
+    contributorRole
   ]
 }
 
